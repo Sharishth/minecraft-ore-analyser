@@ -4,6 +4,7 @@ Every number used in text (tips, quick answers, infographic) is computed here fr
 scanner CSVs, so the workbook and the infographic always agree.
 """
 import argparse
+import json
 import os
 import numpy as np
 import pandas as pd
@@ -48,29 +49,84 @@ def color(ore, i=0):
     return COLOR.get(ore, FALLBACK_COLORS[i % len(FALLBACK_COLORS)])
 
 
-def parse_args(description):
+DIMENSION_NAMES = {"overworld": "Overworld", "nether": "Nether", "end": "The End",
+                   "minecraft:overworld": "Overworld", "minecraft:the_nether": "Nether", "minecraft:the_end": "The End"}
+
+
+def parse_args(description, argv=None):
+    """Builder options. Every scan fact defaults to the world_info.json that ore_scan.py wrote next to
+    the CSVs, so a normal run needs no options at all. An option given on the command line always wins.
+    """
     ap = argparse.ArgumentParser(description=description)
-    ap.add_argument("--test1", default="output/test1", help="folder with Test 1 ore_summary.csv and ore_by_y.csv")
-    ap.add_argument("--test2", default="output/test2", help="folder with Test 2 CSVs (and cross_section.png)")
-    ap.add_argument("--chunks1", type=int, default=3792, help="chunks scanned in Test 1 (console output)")
-    ap.add_argument("--chunks2", type=int, default=18960, help="chunks scanned in Test 2 (console output)")
-    ap.add_argument("--seed1", type=int, default=42)
-    ap.add_argument("--seed2", type=int, default=7)
-    ap.add_argument("--max1", type=int, default=4000, help="--max-chunks used for Test 1")
-    ap.add_argument("--max2", type=int, default=20000, help="--max-chunks used for Test 2")
-    ap.add_argument("--regions", type=int, default=1382, help="region files in the world (console output)")
-    ap.add_argument("--skipped1", default="13081", help="unfinished chunks skipped in Test 1")
-    ap.add_argument("--skipped2", default="17349", help="unfinished chunks skipped in Test 2")
-    ap.add_argument("--world", default="FlowMine")
-    ap.add_argument("--modpack", default="Better Adventures+ (Flowstate, latest)")
-    ap.add_argument("--mc-version", default="1.21.11")
-    ap.add_argument("--dimension", default="Overworld")
-    ap.add_argument("--slice", default="Z 2568, X 7168 to 8191", help="cross-section location text")
-    ap.add_argument("--scan-date", default="26 Oct 2026")
+    ap.add_argument("--test1", default="output/test1", help="folder with the Test 1 scan (ore_scan.py --out)")
+    ap.add_argument("--test2", default="output/test2", help="folder with the Test 2 scan (and cross_section.png)")
     ap.add_argument("--out-dir", default="output")
-    a = ap.parse_args()
+    scan = ap.add_argument_group("scan facts (default: read from each scan's world_info.json)")
+    scan.add_argument("--chunks1", type=int, help="chunks scanned in Test 1")
+    scan.add_argument("--chunks2", type=int, help="chunks scanned in Test 2")
+    scan.add_argument("--seed1", type=int, help="ore_scan.py --seed used for Test 1")
+    scan.add_argument("--seed2", type=int, help="ore_scan.py --seed used for Test 2")
+    scan.add_argument("--max1", type=int, help="--max-chunks used for Test 1")
+    scan.add_argument("--max2", type=int, help="--max-chunks used for Test 2")
+    scan.add_argument("--regions", type=int, help="region files in the world")
+    scan.add_argument("--skipped1", help="unfinished chunks skipped in Test 1")
+    scan.add_argument("--skipped2", help="unfinished chunks skipped in Test 2")
+    scan.add_argument("--world", help="world name for titles and file names (default: save folder name)")
+    scan.add_argument("--mc-version", help="Minecraft version to show (default: what ore_scan.py read or was told)")
+    scan.add_argument("--dimension", help="dimension name to show")
+    scan.add_argument("--slice", help="cross-section location text")
+    scan.add_argument("--scan-date")
+    ap.add_argument("--modpack", help="modpack name to show (the save does not record it)")
+    a = ap.parse_args(argv)
     os.makedirs(a.out_dir, exist_ok=True)
+
+    i1, i2 = load_world_info(a.test1), load_world_info(a.test2)
+    a.version_source = "player" if a.mc_version else i2.get("version_source")
+    s1, s2 = i1.get("scan", {}), i2.get("scan", {})
+
+    def fill(name, value):
+        if getattr(a, name) is None:
+            setattr(a, name, value)
+
+    fill("chunks1", s1.get("chunks"))
+    fill("chunks2", s2.get("chunks"))
+    fill("seed1", s1.get("sample_seed"))
+    fill("seed2", s2.get("sample_seed"))
+    fill("max1", s1.get("max_chunks"))
+    fill("max2", s2.get("max_chunks"))
+    fill("regions", s2.get("region_files", s1.get("region_files")))
+    fill("skipped1", s1.get("skipped_not_fully_generated"))
+    fill("skipped2", s2.get("skipped_not_fully_generated"))
+    fill("world", i2.get("world_folder"))
+    fill("mc_version", i2.get("mc_version"))
+    dim = i2.get("dimension")
+    fill("dimension", DIMENSION_NAMES.get(dim, dim))
+    fill("slice", s2.get("slice"))
+    fill("scan_date", s2.get("date"))
+    fill("modpack", i2.get("modpack", ""))
+    missing = [n for n in ("chunks1", "chunks2", "regions", "world") if getattr(a, n) is None]
+    if missing:
+        ap.error(f"{', '.join('--' + n for n in missing)} needed: {a.test1} or {a.test2} has no world_info.json "
+                 "(scan made by an older ore_scan.py). Rescan, or pass the numbers it printed.")
+    # Optional facts: show a plain word instead of failing.
+    for n in ("seed1", "seed2", "max1", "max2", "mc_version", "dimension", "scan_date"):
+        fill(n, "unknown")
+    fill("slice", "not drawn")
+    a.skipped1 = "unknown" if a.skipped1 is None else str(a.skipped1)
+    a.skipped2 = "unknown" if a.skipped2 is None else str(a.skipped2)
+    a.world_info = i2
+    a.world_seed = i2.get("world_seed")
+    a.seed_text = a.world_seed or "not recorded (rescan with the current ore_scan.py)"
     return a
+
+
+def load_world_info(scan_dir):
+    """world_info.json written by ore_scan.py (version, world seed, scan facts). Empty for older scans."""
+    try:
+        with open(os.path.join(scan_dir, "world_info.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
 
 
 def load(a):
@@ -194,10 +250,12 @@ def tips(f, S2):
         elif o == "diamond_ore":
             t = "Mine just above bedrock. " + (combo_txt or "")
         elif o == "lapis_ore":
-            t = f"Centred near Y {int(s2.median_y[o])}, so a tunnel just under the deepslate line finds it."
+            med = int(s2.median_y[o])
+            t = f"Centred near Y {med}" + (", so a tunnel just under the deepslate line finds it."
+                                          if -16 <= med <= 8 else ".")  # deepslate starts between Y 0 and 8
         elif o == "emerald_ore":
-            t = ("Mountain biomes only and very rare (less than 1 per chunk). Tunnel into tall mountains rather "
-                 "than branch mining. Its single best layer moves a lot between samples because it is so rare.")
+            t = (f"Mountain biomes only and rare ({s2.per_chunk[o]:.2f} per chunk). Tunnel into tall mountains "
+                 "rather than branch mining. Trust its 5-layer band more than its single best layer.")
         else:
             t = f"Most of it is between Y {int(s2.p10_y[o])} and Y {int(s2.p90_y[o])}."
         out[o] = t.strip()
@@ -225,7 +283,7 @@ def mining(f, D2, layers, exact, M=MINING):
         strip = strip.where(sup_s >= th_s, 0)
         y_strip = int(strip.idxmax())
         s_best = float(strip.max())
-        pace = M["stone_steps_per_min"] if y_strip >= 0 else M["deepslate_steps_per_min"]
+        pace = M["stone_steps_per_min"] if y_strip >= 0 else M["deepslate_steps_per_min"]  # deepslate below Y 0
         e5 = sum(exp[o].shift(-k, fill_value=0) for k in range(5))
         w5 = sum(wall.shift(-k, fill_value=0) for k in range(5))
         th_c = max(M["min_support"], M["min_support_frac"] * e5.max())

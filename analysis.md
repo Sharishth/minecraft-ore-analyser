@@ -156,11 +156,11 @@ What this shows:
 | MATCHES VANILLA | 5 |
 | DIFFERS FROM VANILLA | 1 (coal below Y 0) |
 
-Full detail is on the Test Cases sheet of `output/FlowMine_Ore_Report.xlsx`.
+Full detail is on the Test Cases sheet of `example/FlowMine_Ore_Report.xlsx`.
 
 ## Scanner verification (tests/test_ore_scan.py)
 
-20 of 20 checks pass, including:
+All checks pass (40 at the time of writing), including:
 
 - exact ore counts on two synthetic worlds with known ore placement
 - unfinished chunks skipped

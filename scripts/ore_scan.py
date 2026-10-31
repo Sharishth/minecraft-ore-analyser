@@ -8,9 +8,9 @@ also saved on its own as cross_section.png.
 
 The world is only ever opened read-only. Nothing in the save is modified.
 
-Install:  pip install "nbtlib>=2" numpy matplotlib
+Install:  pip install -r requirements.txt
 Run:      python scripts/ore_scan.py "path/to/world" --dim overworld --out output/scan
-Output:   ore_by_y.csv, ore_summary.csv, layers_by_y.csv, ore_chart.png, cross_section.png
+Output:   ore_by_y.csv, ore_summary.csv, layers_by_y.csv, world_info.json, ore_chart.png, cross_section.png
 
 Tips:
 - Close the world (or copy the save folder) before scanning.
@@ -18,8 +18,12 @@ Tips:
   fresh area with the same seed (for example with the Chunky mod) and scan that.
 - Pick the slice location with --slice-x / --slice-z (block coordinates,
   as shown on the F3 screen). Without them the script picks a well-generated area.
+- The Minecraft version is read from level.dat. If that is wrong or missing, force it with
+  --mc-version (see mc_formats.py for the save formats behind each version).
+
+Use from Python: ore_scan.main([world, "--out", folder, ...]) returns the world_info dict.
 """
-import argparse, io, os, re, zlib, gzip, struct, glob, random
+import argparse, datetime, io, json, os, re, zlib, gzip, struct, glob, random
 from collections import defaultdict, Counter
 import numpy as np
 import nbtlib
@@ -28,11 +32,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgba
 
+import mc_formats
+
 DEFAULT_PATTERN = r"(_ore$|^minecraft:ancient_debris$)"
 # Host-rock variants merged into one ore name (deepslate_iron_ore -> iron_ore).
 PREFIX_RE = re.compile(r"^(deepslate|nether|end|end_stone|netherrack|blackstone|basalt)_")
 SUFFIX_RE = re.compile(r"_(deepslate|nether|end)(?=_ore$)")
-FULL_STATUS = {"minecraft:full", "full"}
+FULL_STATUS = {"minecraft:full", "full"}  # chunk generation finished: every ore is placed
 COMP_NAMES = {4: "LZ4", 127: "custom"}
 
 ORE_COLORS = {
@@ -73,14 +79,99 @@ def ore_name(block_id, merge):
     return n if ns == "minecraft" else f"{ns}:{n}"
 
 
-def region_dir(world, dim):
-    if dim == "overworld":
-        return os.path.join(world, "region")
-    if dim == "nether":
-        return os.path.join(world, "DIM-1", "region")
-    if dim == "end":
-        return os.path.join(world, "DIM1", "region")
-    return os.path.join(world, "dimensions", *dim.split(":"), "region")
+VANILLA_DIMS = {"overworld": "minecraft:overworld", "nether": "minecraft:the_nether", "end": "minecraft:the_end"}
+LEGACY_FOLDERS = {"minecraft:overworld": "", "minecraft:the_nether": "DIM-1", "minecraft:the_end": "DIM1"}
+
+
+def region_dir(world, dim, family=None):
+    """Region folder of a dimension.
+
+    Minecraft 26.1+ keeps every dimension under dimensions/<namespace>/<name>; older saves use region, DIM-1
+    and DIM1 for the three vanilla dimensions. With a forced format family that layout is used as is;
+    otherwise the new layout wins when its folder exists.
+    """
+    dim = VANILLA_DIMS.get(dim, dim)
+    new = os.path.join(world, "dimensions", *dim.split(":"), "region")
+    old = LEGACY_FOLDERS.get(dim)
+    if old is None:  # modded dimension: dimensions/<namespace>/<name> in every version
+        return new
+    if family is not None:
+        return new if family.layout == "dimensions" else os.path.join(world, old, "region")
+    return new if os.path.isdir(new) else os.path.join(world, old, "region")
+
+
+def list_dimensions(world):
+    """Dimensions of a save that have region files, as --dim values (vanilla ones first)."""
+    found = [short for short in VANILLA_DIMS if glob.glob(os.path.join(region_dir(world, short), "r.*.mca"))]
+    for d in sorted(glob.glob(os.path.join(world, "dimensions", "*", "*", "region"))):
+        ns, name = os.path.normpath(d).split(os.sep)[-3:-1]
+        if f"{ns}:{name}" not in VANILLA_DIMS.values() and glob.glob(os.path.join(d, "r.*.mca")):
+            found.append(f"{ns}:{name}")
+    return found
+
+
+def _load_nbt(path):
+    try:
+        return nbtlib.load(path)  # opens the file read-only; gzip is detected automatically
+    except Exception:
+        return None
+
+
+def read_world_info(world, family=None):
+    """Version and seed of a save. Fields that cannot be found stay None.
+
+    The seed is in data/minecraft/world_gen_settings.dat from 26.1, in level.dat Data.WorldGenSettings.seed
+    from 1.16, and in level.dat Data.RandomSeed before that. A forced family only looks in its own place.
+    """
+    info = {"level_name": None, "mc_version": None, "data_version": None, "world_seed": None}
+    lvl = _load_nbt(os.path.join(world, "level.dat"))
+    data = lvl.get("Data") if lvl is not None else None
+    if data is None:
+        data = {}
+    if "LevelName" in data:
+        info["level_name"] = str(data["LevelName"])
+    if "Name" in data.get("Version", {}):
+        info["mc_version"] = str(data["Version"]["Name"])
+    if "DataVersion" in data:
+        info["data_version"] = int(data["DataVersion"])
+    seed = None
+    if family is None or family.seed_file == "world_gen_settings.dat":
+        gen = _load_nbt(os.path.join(world, "data", "minecraft", "world_gen_settings.dat"))
+        if gen is not None and "seed" in gen.get("data", {}):
+            seed = gen["data"]["seed"]
+    if seed is None and (family is None or family.seed_file == "level.dat"):
+        if "seed" in data.get("WorldGenSettings", {}):
+            seed = data["WorldGenSettings"]["seed"]
+        elif "RandomSeed" in data:
+            seed = data["RandomSeed"]
+    if seed is not None:
+        info["world_seed"] = str(int(seed))  # text, so Excel never rounds a 19-digit seed
+    return info
+
+
+def version_warning(info):
+    dv = info["data_version"]
+    if dv is None:
+        return "no version in level.dat; the folder layout is detected and chunks are decoded by shape"
+    if dv < mc_formats.FIRST_SUPPORTED_DATA_VERSION:
+        return "this world is older than Minecraft 1.18; its chunk format is not supported"
+    if dv > mc_formats.NEWEST_TESTED_DATA_VERSION:
+        return ("this world is newer than the newest version tested "
+                f"(data version {mc_formats.NEWEST_TESTED_DATA_VERSION}); check the results")
+    return None
+
+
+def palette_name(entry):
+    """Block id of a palette entry.
+
+    Up to 1.21 an entry is {"Name": id, "Properties": ...}. Minecraft 26.x writes a plain id string, or an
+    object holding {"": id} or {"id": id, "properties": ...}.
+    """
+    if isinstance(entry, dict):
+        for key in ("Name", "id", ""):
+            if key in entry:
+                return str(entry[key])
+    return str(entry)
 
 
 def decompress(comp, raw, stats):
@@ -150,7 +241,8 @@ def unpack_states(data_tag, n_palette):
 
 
 def is_full(nbt):
-    return str(nbt.get("Status", "")) in FULL_STATUS
+    # 26.4 renames the field from Status to status
+    return str(nbt.get("Status", nbt.get("status", ""))) in FULL_STATUS
 
 
 SEE_THROUGH = {"minecraft:air", "minecraft:cave_air", "minecraft:void_air", "minecraft:water",
@@ -203,7 +295,7 @@ def scan_chunk(raw, acc, ore_re, merge, stats):
     # A missing section counts as air. Array axes: [y, z, x], block index = y*256 + z*16 + x.
     cls = np.ones(((smax - smin + 1) * 16, 16, 16), dtype=np.int32)
     for sy, bs in secs:
-        palette = [str(p["Name"]) for p in bs["palette"]]
+        palette = [palette_name(p) for p in bs["palette"]]
         pc = np.zeros(len(palette), dtype=np.int32)
         for i, n in enumerate(palette):
             if ore_re.search(n):
@@ -219,8 +311,8 @@ def scan_chunk(raw, acc, ore_re, merge, stats):
         try:
             vals = unpack_states(bs["data"], len(palette))
         except ValueError:
-            stats["corrupt"] += 1
-            cls[k:k + 16] = 0
+            stats["corrupt_sections"] += 1
+            cls[k:k + 16] = 0  # unreadable section: counted as plain rock, so it adds no ore
             continue
         cls[k:k + 16] = pc[vals].reshape(16, 16, 16)
     see = cls == 1
@@ -356,7 +448,7 @@ def build_section(reader, z, x0, width, ore_re, merge):
             bs = sec.get("block_states")
             if bs is None or "palette" not in bs:
                 continue
-            palette = [str(p["Name"]) for p in bs["palette"]]
+            palette = [palette_name(p) for p in bs["palette"]]
             base = int(sec["Y"]) * 16
             ylo = base if ylo is None else min(ylo, base)
             yhi = base + 16 if yhi is None else max(yhi, base + 16)
@@ -430,8 +522,8 @@ def save_cross_section(img, ylo, z, x0, path, dim):
 
 # ---------------- main ----------------
 
-def main():
-    ap = argparse.ArgumentParser()
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Count every ore block per Y level in a Minecraft world (read-only).")
     ap.add_argument("world")
     ap.add_argument("--dim", default="overworld", help="overworld | nether | end | modid:name")
     ap.add_argument("--max-chunks", type=int, default=4000)
@@ -442,13 +534,17 @@ def main():
                          "global: widths comparable across ores")
     ap.add_argument("--log", action="store_true", help="log scale widths")
     ap.add_argument("--top", type=int, default=14, help="max ores to plot")
-    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--seed", type=int, default=42,
+                    help="random seed for picking chunks, so a scan can be repeated (not the world seed)")
+    ap.add_argument("--mc-version", choices=mc_formats.versions(), metavar="VERSION",
+                    help="treat the save as this Minecraft release instead of reading level.dat, e.g. 1.21.11 "
+                         "or 26.3. Picks the folder layout and seed location of that version's save format")
     ap.add_argument("--out", default=os.path.join("output", "scan"), help="output folder (default output/scan)")
     ap.add_argument("--slice-x", type=int, help="block X at the centre of the cross-section")
     ap.add_argument("--slice-z", type=int, help="block Z of the cross-section")
     ap.add_argument("--slice-width", type=int, default=512, help="cross-section width in blocks")
     ap.add_argument("--no-section", action="store_true", help="skip the cross-section")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     ore_re = re.compile(a.pattern)
     merge = not a.no_merge
@@ -460,23 +556,40 @@ def main():
                          "Pick an output folder outside the save, e.g. --out output/scan")
     os.makedirs(a.out, exist_ok=True)
 
-    rdir = region_dir(a.world, a.dim)
+    family = mc_formats.family_for_version(a.mc_version) if a.mc_version else None
+    rdir = region_dir(a.world, a.dim, family)
     files = glob.glob(os.path.join(rdir, "r.*.mca"))
     if not files:
-        raise SystemExit(f"no region files in {rdir}")
+        hint = " (layout forced by --mc-version; try without it)" if family else ""
+        raise SystemExit(f"no region files in {rdir}{hint}")
+    info = read_world_info(a.world, family)
+    info["detected_version"] = info["mc_version"]
+    if family:
+        if info["mc_version"] and info["mc_version"] != a.mc_version:
+            print(f"  note: level.dat says Minecraft {info['mc_version']}; using {a.mc_version} as asked")
+        info["mc_version"] = a.mc_version
+    info["version_source"] = "--mc-version" if family else ("level.dat" if info["mc_version"] else None)
+    seed_txt = f", seed {info['world_seed']}" if info["world_seed"] else ", world seed not found"
+    print(f"world: Minecraft {info['mc_version'] or 'version unknown'}"
+          f" (data version {info['data_version'] or '?'}){seed_txt}")
+    warn = None if family else version_warning(info)
+    if warn:
+        print(f"  warning: {warn}")
     scan_files = files[:]
     rng.shuffle(scan_files)
     per_file = max(1, -(-a.max_chunks // len(scan_files)))
     acc = Acc()
     stats = Counter()
     done = 0
+    first_error = None
     for fp in scan_files:
         n = 0
         for raw in read_chunks(fp, rng, stats):
             try:
                 ok = scan_chunk(raw, acc, ore_re, merge, stats)
-            except Exception:
+            except Exception as e:  # one bad chunk must not stop the scan, but keep the reason
                 stats["corrupt"] += 1
+                first_error = first_error or f"{os.path.basename(fp)}: {type(e).__name__}: {e}"
                 continue
             if not ok:
                 continue
@@ -489,6 +602,8 @@ def main():
     print(f"scanned {done} full chunks from {len(files)} region files")
     for k, v in sorted(stats.items()):
         print(f"  {k}: {v}")
+    if first_error:
+        print(f"  first unreadable chunk: {first_error}")
     if stats.get("skipped_pre_1.18_format") and not done:
         raise SystemExit("world uses pre-1.18 chunk format, not supported")
     counts = acc.counts
@@ -528,6 +643,7 @@ def main():
     # Cross-section
     img = None
     sec_label = ""
+    slice_text = None
     if not a.no_section:
         reader = RegionReader(rdir)
         if a.slice_z is not None:
@@ -545,6 +661,7 @@ def main():
         else:
             save_cross_section(img, ylo, z, x0, os.path.join(a.out, "cross_section.png"), a.dim)
             sec_label = f"Background: slice at Z={z}, X {x0} to {x0 + a.slice_width - 1}"
+            slice_text = f"Z {z}, X {x0} to {x0 + a.slice_width - 1}"
             print(f"cross-section: Z={z}, X {x0}..{x0 + a.slice_width - 1}"
                   f" ({missing} of {a.slice_width} columns not generated)")
 
@@ -594,7 +711,21 @@ def main():
     ax.set_axisbelow(False)
     fig.tight_layout()
     fig.savefig(os.path.join(a.out, "ore_chart.png"), dpi=150)
+    plt.close(fig)
+
+    # Everything the report builders need besides the CSVs, so nobody copies numbers from the console.
+    today = datetime.date.today()
+    info.update({
+        "world_folder": os.path.basename(world_abs), "dimension": a.dim,
+        "scan": {"chunks": done, "region_files": len(files),
+                 "skipped_not_fully_generated": stats.get("skipped_not_fully_generated", 0),
+                 "sample_seed": a.seed, "max_chunks": a.max_chunks,
+                 "date": f"{today.day} {today:%b %Y}", "slice": slice_text},
+    })
+    with open(os.path.join(a.out, "world_info.json"), "w") as f:
+        json.dump(info, f, indent=2)
     print(f"wrote outputs to {os.path.abspath(a.out)}")
+    return info
 
 
 if __name__ == "__main__":

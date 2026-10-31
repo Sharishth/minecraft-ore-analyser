@@ -21,16 +21,20 @@ don't apply because the pack uses custom terrain and floating islands.
 ```
 Minecraft save (read-only)
    |
+   |  ore_analyser_gui.py runs every step below in one click (or run the scripts yourself)
    |  scripts/ore_scan.py   (run twice: Test 1 small sample, Test 2 large sample)
    v
-output/test1/  ore_summary.csv, ore_by_y.csv, layers_by_y.csv, ore_chart.png, cross_section.png
-output/test2/  ore_summary.csv, ore_by_y.csv, layers_by_y.csv, ore_chart.png, cross_section.png
+output/test1/  ore_summary.csv, ore_by_y.csv, layers_by_y.csv, world_info.json, ore_chart.png, cross_section.png
+output/test2/  ore_summary.csv, ore_by_y.csv, layers_by_y.csv, world_info.json, ore_chart.png, cross_section.png
    |
    |  scripts/build_report.py        scripts/build_infographic.py
    |        (both use scripts/common.py for shared rules and text)
    v
-output/FlowMine_Ore_Report.xlsx     output/FlowMine_Ore_Infographic.png
+output/<World>_Ore_Report.xlsx      output/<World>_Ore_Infographic.png
 ```
+
+The app writes to `output/<world name>/` instead, so each world keeps its own results. `output/` is not in git;
+the FlowMine sample lives in `example/`.
 
 ## 3. Folder layout
 
@@ -41,20 +45,23 @@ minecraft-ore-analyser/
   plan.md                  this file
   analysis.md              findings for FlowMine
   requirements.txt         Python packages
+  ore_analyser_gui.py      desktop app (CustomTkinter); imports the scripts below and calls their main()
   scripts/
     ore_scan.py            world scanner (reads region files, never writes to the save)
+    mc_formats.py          save-format families and the release list (newest first)
     common.py              shared settings, test limits, mining assumptions, derived facts, tip text
     build_report.py        Excel workbook builder
     build_infographic.py   infographic builder
   tests/
-    test_ore_scan.py       automated checks (20 checks)
+    test_ore_scan.py       automated checks (40 checks)
     make_world.py          synthetic world: simple, known ore counts
     make_terrain.py        synthetic world: terrain, caves, water, floating island
-  output/                  everything generated lives here
+  example/                 FlowMine sample, kept in git
     test1/                 Test 1 scan output (3,792 chunks, seed 42)
     test2/                 Test 2 scan output (18,960 chunks, seed 7)
     FlowMine_Ore_Report.xlsx
     FlowMine_Ore_Infographic.png
+  output/                  everything you generate (ignored by git)
 ```
 
 ## 4. How to run (Windows PowerShell)
@@ -81,21 +88,25 @@ python scripts/ore_scan.py $WORLD --dim overworld --max-chunks 4000 --seed 42 --
 python scripts/ore_scan.py $WORLD --dim overworld --max-chunks 20000 --seed 7 --slice-width 1024 --out output/test2
 ```
 
-Write down the console lines `scanned N full chunks from R region files` and `skipped_not_fully_generated: S`
-for both runs. They feed the report.
+Each scan writes `world_info.json` with the facts the report needs (chunks scanned, region files, skipped
+chunks, sample seed, date, cross-section, Minecraft version and world seed), so there is nothing to write down.
 
 Other dimensions: `--dim nether`, `--dim end`, or a modded `--dim modid:name`.
 Pick the cross-section yourself with `--slice-x` and `--slice-z` (F3 coordinates).
+If `level.dat` has the wrong or no version, force one with `--mc-version` (for example `--mc-version 1.21.11`).
+It picks that release's save format from `scripts/mc_formats.py`: the folder layout and where the seed is.
+Releases that share a format behave the same; a format that does not match the save stops with a clear message.
 
 ### 4.3 Build the report and infographic
 
 ```
-python scripts/build_report.py --chunks1 3792 --chunks2 18960 --regions 1382 --skipped1 13081 --skipped2 17349
-python scripts/build_infographic.py --chunks1 3792 --chunks2 18960 --regions 1382
+python scripts/build_report.py --modpack "Better Adventures+ (Flowstate, latest)"
+python scripts/build_infographic.py --modpack "Better Adventures+ (Flowstate, latest)"
 ```
 
-The defaults already hold the FlowMine values, so for this world both commands also work with no options.
-For another world, also pass `--world`, `--modpack`, `--mc-version`, `--slice` and `--scan-date`.
+Every scan fact comes from `output/test1/world_info.json` and `output/test2/world_info.json`. Options such as
+`--world`, `--chunks1` or `--mc-version` override them; `--modpack` is the one fact the save cannot give.
+Rebuild the FlowMine sample with `--test1 example/test1 --test2 example/test2 --out-dir example`.
 Run `python scripts/build_report.py --help` for the full list.
 
 ### 4.4 Run the tests
@@ -104,11 +115,16 @@ Run `python scripts/build_report.py --help` for the full list.
 python tests/test_ore_scan.py
 ```
 
-Expected result: `20 of 20 checks passed`.
+Expected result: `40 of 40 checks passed`.
 
 ## 5. How the scanner works (`ore_scan.py`)
 
-1. **Find region files.** Each `r.X.Z.mca` file holds up to 32 x 32 chunks (512 x 512 blocks).
+0. **Read the save's version and seed.** `level.dat` gives the Minecraft version and data version. The world seed is
+   in `data/minecraft/world_gen_settings.dat` (26.x) or `level.dat` (1.16 to 1.21). Both go into `world_info.json` in
+   the output folder. A world newer than the newest tested version (26.3) or older than 1.18 prints a warning.
+1. **Find region files.** Each `r.X.Z.mca` file holds up to 32 x 32 chunks (512 x 512 blocks). Minecraft 26.x keeps
+   them in `dimensions/minecraft/overworld/region`, older saves in `region`. `--dim overworld` finds either.
+   Block palettes are read by shape (object with `Name`, plain id string, `{"": id}` or `{"id": id, ...}`), not by version.
 2. **Sample chunks evenly.** It takes `max-chunks / region files` chunks from each file, in random order inside the
    file, so the sample spreads over the whole world instead of one area. `--seed` makes the sample repeatable.
 3. **Skip unfinished chunks.** Only chunks with status `minecraft:full` are counted. Unfinished chunks have no ores

@@ -23,45 +23,59 @@ report and a one-page infographic that any player can read.
 - **Test cases:** two independent scans compared, with PASS / FAIL results
 - A **real cross-section** of your world drawn behind the charts
 
-## Quick start (Windows PowerShell)
+## Quick start: desktop app
 
 ```
 python -m pip install -r requirements.txt
+python ore_analyser_gui.py
+```
 
+1. Close the world in Minecraft. Press **Browse** and pick the world folder (or the `saves` folder if it holds one
+   world). The app shows the Minecraft version and world seed it found.
+2. Leave **Minecraft version** on *Auto-detect*. Pick a version only if detection is wrong: the list runs from the
+   newest release down, and the note under it shows which save format that version uses.
+3. Optional: type the modpack name (the save does not record it). Press **Scan and build**.
+4. When it finishes, press **Open report** or **Open infographic**. Files are in `output/<world name>/`, so each
+   world keeps its own results.
+
+## Quick start: command line (Windows PowerShell)
+
+```
 $WORLD = "C:\path\to\.minecraft\saves\YourWorld"
 
 # 1. Scan twice: a quick sample and a large, independent one (close the world first)
 python scripts/ore_scan.py $WORLD --max-chunks 4000 --seed 42 --out output/test1
 python scripts/ore_scan.py $WORLD --max-chunks 20000 --seed 7 --slice-width 1024 --out output/test2
 
-# 2. Build the report and infographic (numbers from the scan console output)
-python scripts/build_report.py --world YourWorld --chunks1 <Test 1 chunks> --chunks2 <Test 2 chunks> --regions <region files>
-python scripts/build_infographic.py --world YourWorld --chunks1 <Test 1 chunks> --chunks2 <Test 2 chunks> --regions <region files>
+# 2. Build the report and infographic (every number comes from the scans' world_info.json)
+python scripts/build_report.py --modpack "Pack name"
+python scripts/build_infographic.py --modpack "Pack name"
 
 # 3. Optional: run the tests
 python tests/test_ore_scan.py
 ```
 
-Everything generated goes into `output/`. See `plan.md` for every option and how each step works.
+Each scan writes `world_info.json` next to its CSVs: the Minecraft version and world seed read from the save, plus
+the chunk counts, region files, skipped chunks, sample seed, date and cross-section location. The builders read
+it, so nothing has to be copied from the console. Any `--chunks1`, `--world`, `--mc-version` and similar option
+still overrides it; run `python scripts/build_report.py --help` for the list.
 
-## Regenerate the report yourself
+If the version in `level.dat` is wrong or missing, force it on the scan with `--mc-version`, for example
+`--mc-version 1.21.11`. Releases that share a save format are handled the same way (see `scripts/mc_formats.py`):
 
-1. Close the world (or copy the save) and run both scans into `output/test1` and `output/test2` (commands above).
-2. Note from each scan's console output: `scanned N full chunks from R region files` and
-   `skipped_not_fully_generated: S`.
-3. Build both outputs, passing those numbers and your world details:
-   ```
-   python scripts/build_report.py --world YourWorld --modpack "Pack name" --mc-version 1.21.11 --scan-date "1 Nov 2026" --slice "Z 2568, X 7168 to 8191" --chunks1 N1 --chunks2 N2 --regions R --skipped1 S1 --skipped2 S2
-   python scripts/build_infographic.py --world YourWorld --modpack "Pack name" --mc-version 1.21.11 --scan-date "1 Nov 2026" --chunks1 N1 --chunks2 N2 --regions R
-   ```
-   The `--slice` text is printed by the Test 2 scan (`cross-section: Z=..., X ...`).
-   With no options, both scripts rebuild the FlowMine report from the files in `output/`.
-4. Open `output/YourWorld_Ore_Report.xlsx` in Excel. The file has no stored results, so Excel calculates every
-   formula when it opens. A file preview (for example in Explorer or a mail app) may show empty cells until then.
-5. Optional: install the free **Inter** font for the exact same look as the example. Without it the infographic
-   uses Segoe UI (Windows) or DejaVu Sans, and long text shrinks automatically to fit.
+| Save format | Releases | Region folders | World seed in |
+|---|---|---|---|
+| `anvil-1.18` | 1.18 to 1.21.11 | `region`, `DIM-1`, `DIM1` | `level.dat` |
+| `dims-26.1` | 26.1 to 26.2 | `dimensions/minecraft/<name>/region` | `data/minecraft/world_gen_settings.dat` |
+| `ids-26.3` | 26.3 and newer | as 26.1, with new block palette entries | as 26.1 |
 
-Both builders always rebuild from the CSV files, so the same scan files always give the same report.
+Everything generated goes into `output/`, which git ignores. To rebuild the bundled sample:
+`python scripts/build_report.py --test1 example/test1 --test2 example/test2 --out-dir example`.
+
+Open the report in Excel. The file has no stored results, so Excel calculates every formula when it opens; a file
+preview (for example in Explorer or a mail app) may show empty cells until then. For the exact look of the example,
+install the free **Inter** font including its bold weight; without it the infographic uses Segoe UI (Windows) or
+DejaVu Sans, and long text shrinks to fit.
 
 ## Is my save safe?
 
@@ -73,7 +87,9 @@ of the save.
 
 | Path | What it is |
 |---|---|
+| `ore_analyser_gui.py` | Desktop app (CustomTkinter): scan and build with a few clicks |
 | `scripts/ore_scan.py` | World scanner |
+| `scripts/mc_formats.py` | Minecraft save formats and the release list |
 | `scripts/common.py` | Shared rules, test limits and mining assumptions |
 | `scripts/build_report.py` | Excel report builder |
 | `scripts/build_infographic.py` | Infographic builder |
@@ -101,5 +117,7 @@ Full findings: `analysis.md`.
 
 ## Requirements
 
-Python 3.9+, with `nbtlib`, `numpy`, `matplotlib`, `pandas` and `openpyxl` (see `requirements.txt`).
-Works on Minecraft 1.18 and newer worlds (tested on 1.21.11).
+Python 3.9+, with `nbtlib`, `numpy`, `matplotlib`, `pandas`, `openpyxl` and `customtkinter` (see `requirements.txt`).
+The desktop app also needs Tk, which the python.org installers include.
+Works on Minecraft 1.18 and newer worlds, in both the older save layout (`region` folder) and the Minecraft 26.x
+layout (`dimensions` folder). Tested on 1.21.11 and 26.3.

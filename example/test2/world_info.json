@@ -1,0 +1,20 @@
+{
+  "level_name": "FlowMine",
+  "mc_version": "1.21.11",
+  "data_version": 4671,
+  "world_seed": null,
+  "detected_version": null,
+  "version_source": "added by hand (scanned before world_info.json existed)",
+  "world_folder": "FlowMine",
+  "dimension": "overworld",
+  "modpack": "Better Adventures+ (Flowstate, latest)",
+  "scan": {
+    "chunks": 18960,
+    "region_files": 1382,
+    "skipped_not_fully_generated": 17349,
+    "sample_seed": 7,
+    "max_chunks": 20000,
+    "date": "26 Oct 2026",
+    "slice": "Z 2568, X 7168 to 8191"
+  }
+}

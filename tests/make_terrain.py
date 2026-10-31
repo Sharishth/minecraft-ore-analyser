@@ -98,6 +98,8 @@ def write_region(path, chunks):
 if __name__ == "__main__":
     world = sys.argv[1]
     os.makedirs(os.path.join(world, "region"), exist_ok=True)
+    from make_world import write_level
+    write_level(world, "SynthTerrain", "1.21.11", 4671, 4242424242, False)
     rng = np.random.default_rng(1)
     row = 4
     chunks = [(cx + row * 32, chunk(cx, row, rng)) for cx in range(32)]
