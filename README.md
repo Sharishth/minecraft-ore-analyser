@@ -121,3 +121,16 @@ Python 3.9+, with `nbtlib`, `numpy`, `matplotlib`, `pandas`, `openpyxl` and `cus
 The desktop app also needs Tk, which the python.org installers include.
 Works on Minecraft 1.18 and newer worlds, in both the older save layout (`region` folder) and the Minecraft 26.x
 layout (`dimensions` folder). Tested on 1.21.11 and 26.3.
+
+## Sources
+
+The save-format table above and `scripts/mc_formats.py` are based on these sources (checked 1 Nov 2026):
+
+- [minecraft.wiki: Java Edition level format](https://minecraft.wiki/w/Java_Edition_level_format): folder layout and where the world seed is stored
+- [minecraft.wiki: Chunk format](https://minecraft.wiki/w/Chunk_format): block palette changes in 26.3 and the `Status` to `status` rename in 26.4
+- [minecraft.wiki: Java Edition 26.1](https://minecraft.wiki/w/Java_Edition_26.1): the move to the `dimensions` folder, data version 4786
+- [minecraft.wiki: Java Edition 1.18](https://minecraft.wiki/w/Java_Edition_1.18): data version 2860, the oldest supported release
+- [minecraft.wiki: Data version](https://minecraft.wiki/w/Data_version): data versions of each release
+- [Minecraft Java Edition 26.1 (minecraft.net)](https://www.minecraft.net/en-us/article/minecraft-java-edition-26-1): official notes on the new folder layout
+- [PrismLauncher issue #5064](https://github.com/PrismLauncher/PrismLauncher/issues/5064): the seed moved out of `level.dat` in 26.1
+- [Mojang version manifest](https://piston-meta.mojang.com/mc/game/version_manifest_v2.json): release dates, used to order the version list
