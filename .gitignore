@@ -4,8 +4,8 @@ __pycache__/
 .venv/
 venv/
 
-# Scratch scans (default --out of ore_scan.py). Named scans in output/test1, output/test2 are kept.
-output/scan/
+# Scans, reports and infographics you generate stay local. A sample result lives in example/.
+output/*
 
 # Office lock files and OS files
 ~$*.xlsx

@@ -4,7 +4,7 @@ Find the best Y level for every ore in **your own** Minecraft world, including m
 The scanner reads the real blocks in your save (read-only), counts every ore at every height, and builds an Excel
 report and a one-page infographic that any player can read.
 
-![FlowMine ore infographic](output/FlowMine_Ore_Infographic.png)
+![FlowMine ore infographic](example/FlowMine_Ore_Infographic.png)
 
 > **AI-generated project.** This project was made with AI. The scripts, tests, documentation (this README,
 > `plan.md`, `analysis.md`), the Excel report and the infographic were written by **Claude**, an AI model made by
@@ -78,9 +78,9 @@ of the save.
 | `scripts/build_report.py` | Excel report builder |
 | `scripts/build_infographic.py` | Infographic builder |
 | `tests/` | Automated tests and synthetic world generators |
-| `output/test1`, `output/test2` | Scan results for the FlowMine world |
-| `output/FlowMine_Ore_Report.xlsx` | Excel report |
-| `output/FlowMine_Ore_Infographic.png` | Infographic |
+| `example/test1`, `example/test2` | Sample scan results (FlowMine world) |
+| `example/FlowMine_Ore_Report.xlsx` | Sample Excel report |
+| `example/FlowMine_Ore_Infographic.png` | Sample infographic |
 | `plan.md` | Design, maths, test cases and how to run |
 | `analysis.md` | Findings for the FlowMine world |
 
